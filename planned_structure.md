@@ -1,11 +1,4 @@
 Reference repo : https://github.com/Tramac/awesome-semantic-segmentation-pytorch
-Refer the codes I paste for segmentation -- these are the ones I currently have. Analyse, correct, and generate missing parts
-I also pasted codes previously used for object detection for initial loading, dataset, constant setups, backbone weight loading 
-I need to build a segmentation project using deeplabv3+ model on cityscapes dataset, 
- i have zbook laptop to train with additional nvidia rtx500 - 4gb ram i guess. lets switch with resnet, resnetv1b, mobilenetv2 (- copy pasted from original repo) and experiment. - i need to use only pytorch and this repo already only uses pytorch -  - - need mlflow - need tensorboard - need onnx - need profiler(lets do profiling at last)- 
-lets keep the downloaded dataset inside seg/data- inside data it will be like -- gtFine and images -- inside this will be splits like train test and val, currently I have 297 images in test -- this was taken randomly from train -- 2495 so now train has only 2198 ig, inside each of these splits data is separated across cities -- doesnt matter. 
-I will paste all the files I currently have with structure I currently have. Analyse them, correct them, add comments to each, make them easy and clear and easy to understand, no complications. Generate content for missing codes, improvements and corrections. 
-Change the metrics.py to use mIOU, frequency weighted IoU, per class IOU, mean pixel accuracy, boundary Iou, boundary f score
 
 
 │
