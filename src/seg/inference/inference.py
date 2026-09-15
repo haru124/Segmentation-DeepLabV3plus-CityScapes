@@ -10,6 +10,19 @@ Comprehensive evaluation on the test split:
 Usage:
     python inference.py --exp_config config/experiments/exp_01.yaml
 """
+import sys
+from pathlib import Path
+
+# Add project root to sys.path so 'src.seg.*' imports work
+# regardless of how this script is invoked
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# inference.py is at src/seg/inference/inference.py
+# parents[0] = src/seg/inference/
+# parents[1] = src/seg/
+# parents[2] = src/
+# parents[3] = seg/  ← project root
+sys.path.insert(0, str(PROJECT_ROOT))
+
 
 import argparse
 import torch
@@ -25,7 +38,7 @@ from src.seg.datasets.dataloader import build_dataloader
 from src.seg.losses.losses import build_loss
 from src.seg.evaluation.metrics import SegmentationMetrics
 from src.seg.utils.checkpoint import load_checkpoint
-from src.seg.utils.visualization import save_batch_grid, plot_class_iou
+from src.seg.utils.visualization import save_batch_grid, plot_class_iou, plot_metrics_bar
 from src.seg.tracking.mlflow_logger import MLflowLogger
 from src.seg.tracking.tensorboard_logger import TensorboardLogger
 
@@ -38,7 +51,8 @@ def build_model(cfg):
         backbone=cfg.model.backbone,
         output_stride=cfg.model.output_stride,
         aux=cfg.training.aux_loss,
-        pretrained_base=False,  # we'll load from checkpoint
+        use_pretrained_backbone=False,  # we'll load from checkpoint
+        backbone_weights_path=None,
     )
     return model
 
@@ -50,6 +64,7 @@ def evaluate_test_set(model, test_loader, loss_fn, metrics, device, cfg):
     Returns metrics dict.
     """
     model.eval()
+    loss_fn.eval()
     metrics.reset()
     total_loss = 0.0
     all_preds = []
@@ -95,7 +110,7 @@ def save_visualizations(all_preds, all_targets, all_images, cfg):
     num_samples = min(5, len(all_preds))
     indices = np.random.choice(len(all_preds), num_samples, replace=False)
 
-    vis_dir = Path(cfg.checkpoint.dir).parent / "inference" / cfg.experiment_id
+    vis_dir = Path(cfg.checkpoint.dir).parent.parent / "inference" / cfg.experiment_id / "inference_imgs"
     vis_dir.mkdir(parents=True, exist_ok=True)
 
     for sample_idx, batch_idx in enumerate(indices):
@@ -111,33 +126,77 @@ def save_visualizations(all_preds, all_targets, all_images, cfg):
 
 
 def save_metrics_plots(result, cfg):
-    """Save per-class IoU bar chart."""
-    plot_dir = Path(cfg.checkpoint.dir).parent / "metrics" / cfg.experiment_id
+    """
+    Save:
+      - per-class IoU chart
+      - overall metrics chart
+      - confusion matrix (if available)
+    """
+
+    plot_dir = (
+        Path(cfg.checkpoint.dir).parent.parent
+        / "inference"
+        / cfg.experiment_id
+        / "metrics"
+    )
+
     plot_dir.mkdir(parents=True, exist_ok=True)
 
+    # =========================================================
+    # 1. Per-class IoU
+    # =========================================================
     per_class_iou = result["per_class_iou"]
-    plot_path = plot_dir / "test_per_class_iou.png"
-    plot_class_iou(per_class_iou, str(plot_path),
-                   title="Test Set: Per-Class IoU",
-                   class_names=CITYSCAPES_CLASSES)
+
+    iou_plot_path = plot_dir / "test_per_class_iou.png"
+
+    plot_class_iou(
+        per_class_iou,
+        str(iou_plot_path),
+        title="Test Set: Per-Class IoU",
+        class_names=CITYSCAPES_CLASSES,
+    )
+
+    # =========================================================
+    # 2. Overall metrics bar chart
+    # =========================================================
+    metrics_to_plot = {
+        "mIoU": float(result["mIoU"]),
+        #"FWIoU": float(result["fw_iou"]),
+        "Pixel Acc": float(result["mean_pixel_acc"]),
+        "Precision": float(result["mean_precision"]),
+        "Recall": float(result["mean_recall"]),
+        "F1": float(result["mean_f1"]),
+        #"Class Acc": float(result["mean_class_acc"]),
+        #"Boundary IoU": float(result["boundary_iou"]),
+        #"Boundary F1": float(result["boundary_fscore"]),
+    }
+
+    metrics_plot_path = plot_dir / "test_metrics_summary.png"
+
+    plot_metrics_bar(
+        metrics_to_plot,
+        str(metrics_plot_path),
+        title="Test Metrics Summary",
+    )
+
+    # =========================================================
+    # 3. Test loss separately
+    # =========================================================
+    loss_plot_path = plot_dir / "test_loss.png"
+
+    plot_metrics_bar(
+        {"Test Loss": float(result["test_loss"])},
+        str(loss_plot_path),
+        title="Test Loss",
+    )
+
 
     print(f"[Plots] Saved to {plot_dir}")
 
 
 def log_results(result, cfg):
     """Log test results to MLflow and TensorBoard."""
-    # Find the best checkpoint to extract run info
-    ckpt_dir = Path(cfg.checkpoint.dir)
-    ckpts = sorted(ckpt_dir.glob(f"{cfg.experiment_id}_epoch*.pth"),
-                   key=lambda p: float(p.stem.split("mIoU")[-1]), reverse=True)
-
-    if not ckpts:
-        print("[Log] No checkpoints found. Skipping MLflow/TensorBoard logging.")
-        return
-
-    best_ckpt = ckpts[0]
-    print(f"[Log] Best checkpoint: {best_ckpt.name}")
-
+    per_class_iou = result["per_class_iou"]
     # ── MLflow ──
     if cfg.tracking.mlflow_enabled:
         try:
@@ -152,16 +211,18 @@ def log_results(result, cfg):
             test_metrics = {
                 "test_loss": float(result["test_loss"]),
                 "test_mIoU": float(result["mIoU"]),
-                "test_fw_iou": float(result["fw_iou"]),
+                #"test_fw_iou": float(result["fw_iou"]),
                 "test_pixel_acc": float(result["mean_pixel_acc"]),
-                "test_class_acc": float(result["mean_class_acc"]),
-                "test_boundary_iou": float(result["boundary_iou"]),
-                "test_boundary_fscore": float(result["boundary_fscore"]),
+                "test_precision": float(result["mean_precision"]),
+                "test_recall": float(result["mean_recall"]),
+                "test_f1": float(result["mean_f1"]),
+                #"test_class_acc": float(result["mean_class_acc"]),
+                #"test_boundary_iou": float(result["boundary_iou"]),
+                #"test_boundary_fscore": float(result["boundary_fscore"]),
             }
             mlf.log_metrics(test_metrics, step=0)
 
             # Log per-class IoU
-            per_class_iou = result["per_class_iou"]
             for cls_idx, class_name in enumerate(CITYSCAPES_CLASSES):
                 iou = per_class_iou[cls_idx]
                 iou_val = float(iou) if not np.isnan(iou) else 0.0
@@ -181,13 +242,21 @@ def log_results(result, cfg):
             test_metrics = {
                 "loss": result["test_loss"],
                 "mIoU": result["mIoU"],
-                "fw_iou": result["fw_iou"],
+                #"fw_iou": result["fw_iou"],
                 "pixel_acc": result["mean_pixel_acc"],
-                "class_acc": result["mean_class_acc"],
-                "boundary_iou": result["boundary_iou"],
-                "boundary_fscore": result["boundary_fscore"],
+                "test_precision": float(result["mean_precision"]),
+                "test_recall": float(result["mean_recall"]),
+                "test_f1": float(result["mean_f1"]),
+                #"class_acc": result["mean_class_acc"],
+                #"boundary_iou": result["boundary_iou"],
+                #"boundary_fscore": result["boundary_fscore"],
             }
             tb.log_scalars(test_metrics, step=0, prefix="Test")
+            # Log per-class IoU
+            for cls_idx, class_name in enumerate(CITYSCAPES_CLASSES):
+                iou = per_class_iou[cls_idx]
+                iou_val = float(iou) if not np.isnan(iou) else 0.0
+                tb.log_scalar(f"Test/iou_{class_name}",iou_val,0)  # tag, value, step
 
             tb.close()
             print("[TensorBoard] Test results logged.")
@@ -210,11 +279,13 @@ def main(args):
 
     # ── Build model ──
     model = build_model(cfg)
+
     print(f"[Model] {count_parameters(model)}")
 
     # ── Load best checkpoint ──
     ckpt_dir = Path(cfg.checkpoint.dir)
-    ckpts = sorted(ckpt_dir.glob(f"{cfg.experiment_id}_epoch*.pth"),
+    #exp_stem = cfg.experiment_id.split("_")[0]
+    ckpts = sorted(ckpt_dir.rglob(f"{cfg.experiment_id}_epoch*.pth"),
                    key=lambda p: float(p.stem.split("mIoU")[-1]), reverse=True)
 
     if not ckpts:
@@ -223,12 +294,14 @@ def main(args):
     best_ckpt = ckpts[0]
     load_checkpoint(str(best_ckpt), model, device=str(device))
     print(f"[Checkpoint] Loaded best: {best_ckpt.name}\n")
+    model = model.to(device)
 
     # ── Build loss and metrics ──
+    loss_kwargs = dict(cfg.loss.kwargs) if getattr(cfg.loss, "kwargs", None) else {}
     loss_fn = build_loss(
         cfg.loss.type,
         ignore_index=cfg.data.ignore_index,
-        **cfg.loss.kwargs
+        **loss_kwargs
     )
     metrics = SegmentationMetrics(
         num_classes=cfg.data.num_classes,
@@ -247,11 +320,23 @@ def main(args):
     print(f"{'='*70}")
     print(f"  Loss               : {result['test_loss']:.4f}")
     print(f"  mIoU               : {result['mIoU']:.4f}")
-    print(f"  Frequency-weighted IoU : {result['fw_iou']:.4f}")
+    #print(f"  Frequency-weighted IoU : {result['fw_iou']:.4f}")
     print(f"  Mean Pixel Accuracy: {result['mean_pixel_acc']:.4f}")
-    print(f"  Mean Class Accuracy: {result['mean_class_acc']:.4f}")
-    print(f"  Boundary IoU       : {result['boundary_iou']:.4f}")
-    print(f"  Boundary F-Score   : {result['boundary_fscore']:.4f}")
+    print(f"Precision: {result['mean_precision']:.4f}"),
+    print(f"Recall: {result['mean_recall']:.4f}"),
+    print(f"f1: {result['mean_f1']:.4f}"),
+    #print(f"  Mean Class Accuracy: {result['mean_class_acc']:.4f}")
+    #print(f"  Boundary IoU       : {result['boundary_iou']:.4f}")
+    #print(f"  Boundary F-Score   : {result['boundary_fscore']:.4f}")
+    per_class_iou = result["per_class_iou"]
+
+    print("\nPer-Class IoU:")
+    for cls_name, iou in zip(CITYSCAPES_CLASSES, per_class_iou):
+        if np.isnan(iou):
+            print(f"  {cls_name:<20}: N/A")
+        else:
+            print(f"  {cls_name:<20}: {iou:.4f}")
+
     print(f"{'='*70}\n")
 
     # ── Save visualizations ──
@@ -272,6 +357,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--exp_config", type=str, default=None,
                         help="Path to experiment config yaml")
+    parser.add_argument(
+    "--checkpoint",
+    type=str,
+    default=None,
+    help="Path to checkpoint (.pth). If omitted, auto-load best checkpoint."
+    )
     args = parser.parse_args()
 
     if args.exp_config is None:

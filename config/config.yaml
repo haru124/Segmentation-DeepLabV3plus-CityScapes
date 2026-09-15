@@ -4,7 +4,7 @@
 # Experiments override specific sections with config/experiments/exp_XX.yaml
 
 project:
-  name: "seg"
+  name: "seg_deeplabv3_plus"
   seed: 42
 
 data:
@@ -15,22 +15,26 @@ data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
   num_workers: 4
-  max_samples: null             # for debugging; null = use full dataset
+  max_train_samples: null             # for debugging; null = use full dataset
+  max_val_samples: null   
+  max_test_samples: null   
+
+
 
 model:
   name: "deeplabv3_plus"
   backbone: "resnet50"          # resnet50 | resnet34 | resnet50_v1b | mobilenet_v2
   output_stride: 16             # 8 (better) or 16 (lighter on memory)
-  pretrained_backbone: true
-  pretrained_weights: null
+  use_pretrained_backbone: true
   backbone_weights_path: null  #  path to manually downloaded weights
   use_jpu: false              # use Joint Pyramid Upsampling module (adds memory overhead)
 
 
 training:
-  epochs: 80
+  epochs: 50
   lr: 0.007
   lr_scheduler: "poly"          # poly | cosine | step
+  warmup_epochs: 0
   momentum: 0.9
   weight_decay: 1.0e-4
   optimizer: "sgd"              # sgd | adamw | adam
@@ -39,9 +43,12 @@ training:
   grad_clip: null               # max grad norm; null = no clipping
   amp: true                     # mixed precision (FP16) — essential for 4 GB GPU
   accumulation_steps: 4         # gradient accumulation; effective_batch = batch * steps
+  early_stopping_patience: 10 #stop if no mIoU improvement for 10 epochs
+  early_stopping_min_delta: 0.001  # minimum improvement to count
+
 
 loss:
-  type: "ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce
+  type: "ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
   kwargs: {}                    # loss-specific hyperparameters
 
 evaluation:
@@ -61,3 +68,4 @@ checkpoint:
   dir: "outputs/checkpoints"
   save_top_k: 3                 # keep only top-k by val mIoU
   resume: null                  # path to checkpoint or null
+

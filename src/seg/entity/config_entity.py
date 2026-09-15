@@ -25,8 +25,9 @@ class DataConfig:
     image_size: List[int]        # [H, W] e.g. [512, 1024]
     batch_size: int              # per-GPU batch size
     num_workers: int             # DataLoader worker processes
-    max_samples: Optional[int]    # for debugging; None = use full dataset
-
+    max_train_samples: Optional[int]    # for debugging; None = use full dataset
+    max_val_samples: Optional[int]
+    max_test_samples: Optional[int]
 
 @dataclass
 class ModelConfig:
@@ -34,8 +35,12 @@ class ModelConfig:
     name: str                           # "deeplabv3_plus"
     backbone: str                       # "resnet50" | "resnet34" | "mobilenet_v2"
     output_stride: int                  # 16 (lighter) or 8 (better accuracy)
-    pretrained_backbone: bool           # load ImageNet weights for backbone
-    pretrained_weights: Optional[str]   # path to full model weights or None
+    use_pretrained_backbone: bool          
+    # True:
+    #   - load local backbone weights if path exists
+    #   - otherwise download torchvision pretrained weights
+    # False:
+    #   - random initialization
     backbone_weights_path: Optional[str] # path to backbone weights or None
     use_jpu: bool                       # whether to use Joint Pyramid Upsampling module (adds memory overhead)
 
@@ -46,6 +51,7 @@ class TrainingConfig:
     epochs: int
     lr: float
     lr_scheduler: str          # "poly" | "cosine" | "step"
+    warmup: int   
     momentum: float            # for SGD
     weight_decay: float
     optimizer: str             # "sgd" | "adamw" | "adam"
@@ -54,6 +60,8 @@ class TrainingConfig:
     amp: bool                  # mixed precision (FP16) — essential for 4 GB GPU
     accumulation_steps: int    # gradient accumulation; effective batch = batch*steps
     grad_clip: Optional[float] # max gradient norm; None = no clipping
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 0.001
 
 
 @dataclass

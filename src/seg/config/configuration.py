@@ -99,7 +99,9 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         image_size  = d["image_size"],
         batch_size  = d["batch_size"],
         num_workers = d["num_workers"],
-        max_samples  = d.get("max_samples"),
+        max_train_samples  = d.get("max_train_samples"),
+        max_val_samples = d.get("max_val_samples"),
+        max_test_samples = d.get("max_test_samples"),
     )
 
     # ── model ──
@@ -108,8 +110,7 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         name               = m["name"],
         backbone           = m["backbone"],
         output_stride      = m["output_stride"],
-        pretrained_backbone= m["pretrained_backbone"],
-        pretrained_weights = m.get("pretrained_weights"),
+        use_pretrained_backbone= m["use_pretrained_backbone"],
         backbone_weights_path = m.get("backbone_weights_path"),  
         use_jpu            = m.get("use_jpu", False),  # default to False if not specified
     )
@@ -120,6 +121,7 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         epochs            = t["epochs"],
         lr                = t["lr"],
         lr_scheduler      = t["lr_scheduler"],
+        warmup     = t.get("warmup", 0), 
         momentum          = t.get("momentum", 0.9),
         weight_decay      = t.get("weight_decay", 1e-4),
         optimizer         = t.get("optimizer", "sgd"),
@@ -128,12 +130,23 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         amp               = t.get("amp", True),
         accumulation_steps= t.get("accumulation_steps", 1),
         grad_clip         = t.get("grad_clip"),
+        early_stopping_patience= t.get("early_stopping_patience"),
+        early_stopping_min_delta = t.get("early_stopping_min_delta", 0.001),
     )
 
     # ── loss ──
     l = cfg.get("loss", {"type": "ce"})
-    loss_type = l.pop("type")          # pull out the name
-    loss = LossConfig(type=loss_type, kwargs=l)
+
+    loss_type = l.get("type", "ce")
+
+    loss_kwargs = {
+        k: v for k, v in l.items()
+        if k != "type"
+    }
+    loss = LossConfig(
+        type=loss_type,
+        kwargs=loss_kwargs,
+    )
 
     # ── tracking ──
     tr = cfg.get("tracking", {})
